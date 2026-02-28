@@ -1,0 +1,190 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:../../dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users      User[]
+  clients    Client[]
+  tasks      Task[]
+  notices    Notice[]
+  auditLogs  AuditLog[]
+  gstReturns GSTReturn[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("STAFF")
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant         Tenant     @relation(fields: [tenantId], references: [id])
+  assignedTasks  Task[]     @relation("AssignedTo")
+  createdTasks   Task[]     @relation("CreatedBy")
+  auditLogs      AuditLog[]
+}
+
+model Client {
+  id          String   @id @default(uuid())
+  name        String
+  tradeName   String?
+  email       String?
+  phone       String?
+  address     String?
+  isActive    Boolean  @default(true)
+  tenantId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  gstins     GSTIN[]
+  documents  Document[]
+  notices    Notice[]
+}
+
+model GSTIN {
+  id         String   @id @default(uuid())
+  gstin      String
+  state      String?
+  status     String   @default("ACTIVE")
+  clientId   String
+  createdAt  DateTime @default(now())
+
+  client      Client       @relation(fields: [clientId], references: [id])
+  gstReturns  GSTReturn[]
+  gstAccount  GSTAccount?
+}
+
+model GSTAccount {
+  id           String   @id @default(uuid())
+  gstinId      String   @unique
+  username     String
+  lastSyncAt   DateTime?
+  syncStatus   String   @default("NEVER_SYNCED")
+  isConnected  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  gstin    GSTIN     @relation(fields: [gstinId], references: [id])
+  syncJobs SyncJob[]
+}
+
+model SyncJob {
+  id           String   @id @default(uuid())
+  accountId    String
+  jobType      String
+  reportTypes  String
+  period       String?
+  status       String   @default("QUEUED")
+  progress     Int      @default(0)
+  result       String?
+  error        String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  account GSTAccount @relation(fields: [accountId], references: [id])
+}
+
+model GSTReturn {
+  id           String   @id @default(uuid())
+  returnType   String
+  period       String
+  fileName     String
+  data         String
+  tenantId     String
+  gstinId      String
+  uploadedAt   DateTime @default(now())
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  gstin      GSTIN      @relation(fields: [gstinId], references: [id])
+  mismatches Mismatch[]
+}
+
+model Mismatch {
+  id            String   @id @default(uuid())
+  returnId      String
+  invoiceNo     String
+  supplierGstin String?
+  field         String
+  filed         String
+  matched       String
+  difference    String
+  status        String   @default("UNRESOLVED")
+  createdAt     DateTime @default(now())
+
+  gstReturn GSTReturn @relation(fields: [returnId], references: [id])
+}
+
+model Notice {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  noticeType  String
+  status      String    @default("PENDING")
+  dueDate     DateTime?
+  clientId    String?
+  tenantId    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  client Client? @relation(fields: [clientId], references: [id])
+  tenant Tenant  @relation(fields: [tenantId], references: [id])
+}
+
+model Task {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  priority    String    @default("MEDIUM")
+  status      String    @default("TODO")
+  dueDate     DateTime?
+  assigneeId  String?
+  creatorId   String
+  tenantId    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  assignee User?  @relation("AssignedTo", fields: [assigneeId], references: [id])
+  creator  User   @relation("CreatedBy", fields: [creatorId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+}
+
+model Document {
+  id         String   @id @default(uuid())
+  name       String
+  fileType   String
+  filePath   String
+  clientId   String
+  uploadedAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  userId    String
+  tenantId  String
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
