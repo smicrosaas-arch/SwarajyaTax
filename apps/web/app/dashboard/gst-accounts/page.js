@@ -277,13 +277,19 @@ export default function GSTAccountsPage() {
                         <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                             <div className="input-group">
                                 <label>Select GSTIN</label>
-                                <select className="input" required value={connectForm.gstinId}
-                                    onChange={(e) => setConnectForm({ ...connectForm, gstinId: e.target.value })}>
-                                    <option value="">Choose a GSTIN to connect...</option>
-                                    {gstins.map(g => (
-                                        <option key={g.id} value={g.id}>{g.gstin} — {g.clientName}</option>
-                                    ))}
-                                </select>
+                                {gstins.length === 0 ? (
+                                    <div className="alert alert-info" style={{ fontSize: '13px', padding: '10px' }}>
+                                        No GSTINs found. please <a href="/dashboard/clients" style={{ textDecoration: 'underline', color: 'inherit', fontWeight: 600 }}>Add a Client</a> with an Initial GSTIN first.
+                                    </div>
+                                ) : (
+                                    <select className="input" required value={connectForm.gstinId}
+                                        onChange={(e) => setConnectForm({ ...connectForm, gstinId: e.target.value })}>
+                                        <option value="">Choose a GSTIN to connect...</option>
+                                        {gstins.map(g => (
+                                            <option key={g.id} value={g.id}>{g.gstin} — {g.clientName}</option>
+                                        ))}
+                                    </select>
+                                )}
                             </div>
                             <div className="input-group">
                                 <label>GST Portal Username</label>

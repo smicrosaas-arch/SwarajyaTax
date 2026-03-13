@@ -109,8 +109,8 @@ export default function ClientsPage() {
                         {error && <div className="alert alert-error mb-md">⚠ {error}</div>}
                         <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                             <div className="input-group">
-                                <label>Client Name *</label>
-                                <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="ABC Enterprises" />
+                                <label>Client Name (Auto-filled if GSTIN provided)</label>
+                                <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="ABC Enterprises" />
                             </div>
                             <div className="input-group">
                                 <label>Trade Name</label>
@@ -132,7 +132,8 @@ export default function ClientsPage() {
                             </div>
                             <div className="input-group">
                                 <label>Initial GSTIN (Optional)</label>
-                                <input className="input" value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value })} placeholder="22AAAAA0000A1Z5" />
+                                <input className="input" value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value })}
+                                    placeholder="22AAAAA0000A1Z5" minLength={15} maxLength={15} title="GSTIN must be exactly 15 characters" />
                             </div>
                             <div className="modal-actions">
                                 <button type="button" className="btn" onClick={() => setShowModal(false)}>Cancel</button>
@@ -140,8 +141,9 @@ export default function ClientsPage() {
                             </div>
                         </form>
                     </div>
-                </div>
-            )}
-        </div>
+                </div >
+            )
+            }
+        </div >
     );
 }

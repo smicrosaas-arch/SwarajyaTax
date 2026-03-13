@@ -15,6 +15,13 @@
     "db:seed": "npm run seed --workspace=packages/database"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "prisma": "^5.22.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
   }
 }

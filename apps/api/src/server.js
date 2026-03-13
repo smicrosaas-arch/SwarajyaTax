@@ -12,17 +12,30 @@ const taskRoutes = require('./routes/tasks');
 const dashboardRoutes = require('./routes/dashboard');
 const gstAccountRoutes = require('./routes/gst-accounts');
 
+const gspService = require('./services/gst');
 const prisma = new PrismaClient();
 
-const app = fastify({ logger: true });
+const gsp = new gspService({
+    apiKey: process.env.GSP_API_KEY,
+    secret: process.env.GSP_SECRET,
+    provider: process.env.GSP_PROVIDER || 'MOCK',
+    baseUrl: process.env.GSP_BASE_URL
+});
+
+const app = fastify({
+    logger: {
+        level: 'debug'
+    }
+});
 
 async function start() {
     // Register plugins
     await app.register(cors, { origin: true, credentials: true });
     await app.register(jwt, { secret: process.env.JWT_SECRET || 'gst-compliance-secret-key-change-me' });
 
-    // Decorate with prisma
+    // Decorate with services
     app.decorate('prisma', prisma);
+    app.decorate('gsp', gsp);
 
     // Auth decorator
     app.decorate('authenticate', async function (request, reply) {
@@ -62,12 +75,25 @@ async function start() {
     await app.register(dashboardRoutes, { prefix: '/api/dashboard' });
     await app.register(gstAccountRoutes, { prefix: '/api/gst-accounts' });
 
+    console.log('[BOOT] Registering diagnostic route /api/test-gsp/:gstin');
+    // GSP Diagnostic
+    app.get('/api/test-gsp/:gstin', async (request, reply) => {
+        try {
+            const data = await app.gsp.verifyGSTIN(request.params.gstin);
+            return data;
+        } catch (err) {
+            return reply.status(500).send({ error: err.message });
+        }
+    });
+
     // Health check
     app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 
-    const port = process.env.API_PORT || 3001;
+    const port = process.env.PORT || process.env.API_PORT || 3001;
+    console.log(`[BOOT] Attempting to listen on port ${port}`);
     await app.listen({ port: Number(port), host: '0.0.0.0' });
-    console.log(`API server running on http://localhost:${port}`);
+    console.log(`[BOOT] API server running on http://0.0.0.0:${port}`);
+    console.log(`[BOOT] Registered Routes: ${app.printRoutes()}`);
 }
 
 start().catch((err) => {

@@ -31,15 +31,29 @@ async function clientRoutes(fastify, options) {
 
     // Create client
     fastify.post('/', async (request, reply) => {
-        const { name, tradeName, email, phone, address, gstin } = request.body || {};
+        let { name, tradeName, email, phone, address, gstin } = request.body || {};
 
-        if (!name) {
-            return reply.status(400).send({ error: 'Client name is required' });
+        if (!name && !gstin) {
+            return reply.status(400).send({ error: 'Client name or GSTIN is required' });
+        }
+
+        // Phase 1: Real-time GSTIN Verification
+        let gstinData = null;
+        if (gstin && gstin.trim().length >= 15) {
+            try {
+                gstinData = await fastify.gsp.verifyGSTIN(gstin.trim().toUpperCase());
+                // Enrich data if not provided by user
+                if (!name) name = gstinData.legalName;
+                if (!tradeName) tradeName = gstinData.tradeName;
+            } catch (err) {
+                fastify.log.error(`GSTIN Verification failed: ${err.message}`);
+                // Continue even if verification fails, but log it
+            }
         }
 
         const client = await fastify.prisma.client.create({
             data: {
-                name,
+                name: name || 'Unknown Client',
                 tradeName,
                 email,
                 phone,
@@ -52,12 +66,20 @@ async function clientRoutes(fastify, options) {
             await fastify.prisma.gSTIN.create({
                 data: {
                     gstin: gstin.trim().toUpperCase(),
-                    clientId: client.id
+                    clientId: client.id,
+                    state: gstinData?.state || null,
+                    status: gstinData?.status || 'ACTIVE'
                 }
             });
         }
 
-        return reply.status(201).send(client);
+        // Fetch the full client object with gstins to return to the frontend
+        const fullClient = await fastify.prisma.client.findUnique({
+            where: { id: client.id },
+            include: { gstins: true, _count: { select: { documents: true, notices: true } } }
+        });
+
+        return reply.status(201).send(fullClient);
     });
 
     // Get client detail
