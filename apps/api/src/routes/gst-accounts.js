@@ -1,56 +1,12 @@
-/**
- * GST Account Linking & Auto-Download Routes
- * Simulates OptoTax-like GST portal integration
- */
-
-// Mock GSTR data generator for demo
-function generateMockGSTR(returnType, period, gstin) {
-    const invoiceCount = Math.floor(Math.random() * 15) + 5;
-    const invoices = [];
-    for (let i = 1; i <= invoiceCount; i++) {
-        const taxable = Math.round((Math.random() * 50000 + 5000) * 100) / 100;
-        const rate = [5, 12, 18, 28][Math.floor(Math.random() * 4)];
-        const tax = Math.round(taxable * rate / 100 * 100) / 100;
-        invoices.push({
-            invoiceNo: `INV-${period}-${String(i).padStart(3, '0')}`,
-            invoiceDate: `2026-${period.substring(0, 2)}-${String(Math.floor(Math.random() * 28) + 1).padStart(2, '0')}`,
-            supplierGstin: `${String(Math.floor(Math.random() * 37) + 1).padStart(2, '0')}AAACB${String(Math.floor(Math.random() * 9999)).padStart(4, '0')}Q1Z5`,
-            tradeName: ['Ace Trading', 'Global Supplies', 'Metro Imports', 'Star Industries', 'Nova Corp'][Math.floor(Math.random() * 5)],
-            taxableValue: taxable,
-            rate: rate,
-            igst: rate === 18 || rate === 28 ? tax : 0,
-            cgst: rate === 5 || rate === 12 ? Math.round(tax / 2 * 100) / 100 : 0,
-            sgst: rate === 5 || rate === 12 ? Math.round(tax / 2 * 100) / 100 : 0,
-            cess: rate === 28 ? Math.round(taxable * 0.01 * 100) / 100 : 0,
-            totalValue: Math.round((taxable + tax) * 100) / 100,
-        });
-    }
-    return {
-        gstin,
-        returnType,
-        period,
-        fp: period,
-        invoices,
-        summary: {
-            totalInvoices: invoices.length,
-            totalTaxableValue: Math.round(invoices.reduce((s, i) => s + i.taxableValue, 0) * 100) / 100,
-            totalIGST: Math.round(invoices.reduce((s, i) => s + i.igst, 0) * 100) / 100,
-            totalCGST: Math.round(invoices.reduce((s, i) => s + i.cgst, 0) * 100) / 100,
-            totalSGST: Math.round(invoices.reduce((s, i) => s + i.sgst, 0) * 100) / 100,
-            totalCess: Math.round(invoices.reduce((s, i) => s + i.cess, 0) * 100) / 100,
-        }
-    };
-}
-
 async function gstAccountRoutes(fastify, options) {
     fastify.addHook('preHandler', fastify.authenticate);
 
-    // Link a GST account (connect GSTIN credentials)
-    fastify.post('/connect', async (request, reply) => {
-        const { gstinId, username, password } = request.body || {};
+    // Step 1: Request OTP from GST Portal
+    fastify.post('/connect/request-otp', async (request, reply) => {
+        const { gstinId, username } = request.body || {};
 
-        if (!gstinId || !username || !password) {
-            return reply.status(400).send({ error: 'gstinId, username, and password are required' });
+        if (!gstinId || !username) {
+            return reply.status(400).send({ error: 'gstinId and username are required' });
         }
 
         // Verify GSTIN belongs to tenant's client
@@ -63,28 +19,64 @@ async function gstAccountRoutes(fastify, options) {
             return reply.status(404).send({ error: 'GSTIN not found' });
         }
 
-        // Check if already connected
-        const existing = await fastify.prisma.gSTAccount.findUnique({ where: { gstinId } });
-        if (existing) {
-            // Update credentials
-            const updated = await fastify.prisma.gSTAccount.update({
-                where: { gstinId },
-                data: { username, isConnected: true, syncStatus: 'READY' }
-            });
-            return { account: updated, message: 'Account credentials updated' };
+        try {
+            const result = await fastify.gsp.requestOTP(username);
+            return {
+                success: true,
+                transactionId: result.transactionId,
+                message: result.message || 'OTP sent successfully'
+            };
+        } catch (err) {
+            return reply.status(500).send({ error: err.message });
+        }
+    });
+
+    // Step 2: Verify OTP and Connect
+    fastify.post('/connect/verify', async (request, reply) => {
+        const { gstinId, username, otp, transactionId } = request.body || {};
+
+        if (!gstinId || !username || !otp || !transactionId) {
+            return reply.status(400).send({ error: 'Missing required fields: gstinId, username, otp, transactionId' });
         }
 
-        // Simulate OTP verification (in production, this would call GST portal)
-        const account = await fastify.prisma.gSTAccount.create({
-            data: {
-                gstinId,
-                username,
-                isConnected: true,
-                syncStatus: 'READY'
-            }
+        // Verify GSTIN belongs to tenant
+        const gstin = await fastify.prisma.gSTIN.findUnique({
+            where: { id: gstinId },
+            include: { client: true }
         });
 
-        return reply.status(201).send({ account, message: 'GST account connected successfully' });
+        if (!gstin || gstin.client.tenantId !== request.user.tenantId) {
+            return reply.status(404).send({ error: 'GSTIN not found' });
+        }
+
+        try {
+            const result = await fastify.gsp.verifyOTP(username, otp, transactionId);
+
+            if (result.success) {
+                // Upsert GSTAccount
+                const account = await fastify.prisma.gSTAccount.upsert({
+                    where: { gstinId },
+                    update: {
+                        username,
+                        isConnected: true,
+                        syncStatus: 'READY',
+                        lastSyncAt: null // Reset on new connection
+                    },
+                    create: {
+                        gstinId,
+                        username,
+                        isConnected: true,
+                        syncStatus: 'READY'
+                    }
+                });
+
+                return { success: true, account, message: 'GST account connected successfully!' };
+            } else {
+                return reply.status(400).send({ error: result.message || 'OTP verification failed' });
+            }
+        } catch (err) {
+            return reply.status(500).send({ error: err.message });
+        }
     });
 
     // List all connected GST accounts
@@ -151,25 +143,33 @@ async function gstAccountRoutes(fastify, options) {
             }
         });
 
-        // Simulate async download — in production this would be Puppeteer automation
-        const targetPeriod = period || new Date().toISOString().substring(5, 7) + new Date().getFullYear();
+        // Call real GSP service to download returns
+        const targetPeriod = period || (String(new Date().getMonth()).padStart(2, '0') + new Date().getFullYear()); // Default to prev month
         const downloadedReturns = [];
 
         for (const returnType of reportTypes) {
-            const mockData = generateMockGSTR(returnType, targetPeriod, account.gstin.gstin);
+            try {
+                const realData = await fastify.gsp.downloadReturn(account.username, returnType, targetPeriod);
 
-            const gstReturn = await fastify.prisma.gSTReturn.create({
-                data: {
+                const gstReturn = await fastify.prisma.gSTReturn.create({
+                    data: {
+                        returnType,
+                        period: targetPeriod,
+                        fileName: `${returnType}_${targetPeriod}_real.json`,
+                        data: JSON.stringify(realData),
+                        tenantId: request.user.tenantId,
+                        gstinId: account.gstin.id,
+                    }
+                });
+
+                downloadedReturns.push({
                     returnType,
-                    period: targetPeriod,
-                    fileName: `${returnType}_${targetPeriod}_auto.json`,
-                    data: JSON.stringify(mockData),
-                    tenantId: request.user.tenantId,
-                    gstinId: account.gstin.id,
-                }
-            });
-
-            downloadedReturns.push({ returnType, id: gstReturn.id, invoiceCount: mockData.invoices.length });
+                    id: gstReturn.id,
+                    invoiceCount: Array.isArray(realData.invoices) ? realData.invoices.length : (realData.summary?.total_invoices || 0)
+                });
+            } catch (err) {
+                console.error(`[Sync] Failed to download ${returnType}: ${err.message}`);
+            }
         }
 
         // Update sync job
@@ -213,7 +213,7 @@ async function gstAccountRoutes(fastify, options) {
         }
 
         const results = [];
-        const targetPeriod = period || `${String(new Date().getMonth() + 1).padStart(2, '0')}${new Date().getFullYear()}`;
+        const targetPeriod = period || (String(new Date().getMonth()).padStart(2, '0') + new Date().getFullYear());
         const reportTypes = ['GSTR1', 'GSTR2A', 'GSTR2B', 'GSTR3B'];
 
         for (const account of accounts) {
@@ -230,22 +230,31 @@ async function gstAccountRoutes(fastify, options) {
 
             const downloaded = [];
             for (const rt of reportTypes) {
-                const mockData = generateMockGSTR(rt, targetPeriod, account.gstin.gstin);
-                const gstReturn = await fastify.prisma.gSTReturn.create({
-                    data: {
-                        returnType: rt, period: targetPeriod,
-                        fileName: `${rt}_${targetPeriod}_auto.json`,
-                        data: JSON.stringify(mockData),
-                        tenantId: request.user.tenantId,
-                        gstinId: account.gstin.id
-                    }
-                });
-                downloaded.push({ returnType: rt, id: gstReturn.id });
+                try {
+                    const realData = await fastify.gsp.downloadReturn(account.username, rt, targetPeriod);
+                    const gstReturn = await fastify.prisma.gSTReturn.create({
+                        data: {
+                            returnType: rt, period: targetPeriod,
+                            fileName: `${rt}_${targetPeriod}_real.json`,
+                            data: JSON.stringify(realData),
+                            tenantId: request.user.tenantId,
+                            gstinId: account.gstin.id
+                        }
+                    });
+                    downloaded.push({ returnType: rt, id: gstReturn.id });
+                } catch (err) {
+                    console.error(`[Bulk Sync] Failed for ${account.username} - ${rt}: ${err.message}`);
+                }
             }
 
             await fastify.prisma.syncJob.update({
                 where: { id: syncJob.id },
-                data: { status: 'COMPLETED', progress: 100, result: JSON.stringify({ downloaded }), completedAt: new Date() }
+                data: {
+                    status: 'COMPLETED',
+                    progress: 100,
+                    result: JSON.stringify({ downloadedCount: downloaded.length, reportTypes: downloaded.map(d => d.returnType) }),
+                    completedAt: new Date()
+                }
             });
 
             await fastify.prisma.gSTAccount.update({

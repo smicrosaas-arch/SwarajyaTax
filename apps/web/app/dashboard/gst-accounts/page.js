@@ -17,7 +17,10 @@ export default function GSTAccountsPage() {
     const [syncingId, setSyncingId] = useState(null);
     const [bulkSyncing, setBulkSyncing] = useState(false);
     const [syncJobs, setSyncJobs] = useState([]);
-    const [connectForm, setConnectForm] = useState({ gstinId: '', username: '', password: '' });
+    const [connectForm, setConnectForm] = useState({ gstinId: '', username: '' });
+    const [otpStep, setOtpStep] = useState(1); // 1: username, 2: otp
+    const [transactionId, setTransactionId] = useState('');
+    const [otp, setOtp] = useState('');
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
 
@@ -50,17 +53,37 @@ export default function GSTAccountsPage() {
 
     useEffect(() => { fetchAccounts(); fetchClients(); fetchSyncJobs(); }, []);
 
-    const handleConnect = async (e) => {
+    const handleConnectRequest = async (e) => {
         e.preventDefault();
         setError(''); setSuccessMsg('');
         try {
-            const res = await fetch(`${API}/api/gst-accounts/connect`, {
+            const res = await fetch(`${API}/api/gst-accounts/connect/request-otp`, {
                 method: 'POST', headers: authHeaders(), body: JSON.stringify(connectForm)
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
+
+            setTransactionId(data.transactionId);
+            setOtpStep(2);
+            setSuccessMsg(data.message || 'OTP sent to registered mobile');
+        } catch (err) { setError(err.message); }
+    };
+
+    const handleVerifyOtp = async (e) => {
+        e.preventDefault();
+        setError(''); setSuccessMsg('');
+        try {
+            const res = await fetch(`${API}/api/gst-accounts/connect/verify`, {
+                method: 'POST', headers: authHeaders(),
+                body: JSON.stringify({ ...connectForm, otp, transactionId })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
             setShowConnect(false);
-            setConnectForm({ gstinId: '', username: '', password: '' });
+            setOtpStep(1);
+            setOtp('');
+            setConnectForm({ gstinId: '', username: '' });
             setSuccessMsg('GST account connected successfully!');
             fetchAccounts();
         } catch (err) { setError(err.message); }
@@ -267,50 +290,68 @@ export default function GSTAccountsPage() {
 
             {/* Connect GSTIN Modal */}
             {showConnect && (
-                <div className="modal-overlay" onClick={() => setShowConnect(false)}>
+                <div className="modal-overlay" onClick={() => { setShowConnect(false); setOtpStep(1); }}>
                     <div className="glass modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>Connect GST Account</h2>
+                        <h2>{otpStep === 1 ? 'Connect GST Account' : 'Verify OTP'}</h2>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
-                            Enter the GST portal credentials for a GSTIN. We'll use these to auto-download returns, reports, and notices.
+                            {otpStep === 1
+                                ? "Enter your GST portal username. We'll send an OTP to your registered mobile number."
+                                : `Enter the 6-digit OTP sent for user ${connectForm.username}.`}
                         </p>
+
                         {error && showConnect && <div className="alert alert-error mb-md">⚠ {error}</div>}
-                        <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                            <div className="input-group">
-                                <label>Select GSTIN</label>
-                                {gstins.length === 0 ? (
-                                    <div className="alert alert-info" style={{ fontSize: '13px', padding: '10px' }}>
-                                        No GSTINs found. please <a href="/dashboard/clients" style={{ textDecoration: 'underline', color: 'inherit', fontWeight: 600 }}>Add a Client</a> with an Initial GSTIN first.
-                                    </div>
-                                ) : (
-                                    <select className="input" required value={connectForm.gstinId}
-                                        onChange={(e) => setConnectForm({ ...connectForm, gstinId: e.target.value })}>
-                                        <option value="">Choose a GSTIN to connect...</option>
-                                        {gstins.map(g => (
-                                            <option key={g.id} value={g.id}>{g.gstin} — {g.clientName}</option>
-                                        ))}
-                                    </select>
-                                )}
-                            </div>
-                            <div className="input-group">
-                                <label>GST Portal Username</label>
-                                <input className="input" required value={connectForm.username}
-                                    onChange={(e) => setConnectForm({ ...connectForm, username: e.target.value })}
-                                    placeholder="Your GST portal username" />
-                            </div>
-                            <div className="input-group">
-                                <label>GST Portal Password</label>
-                                <input className="input" type="password" required value={connectForm.password}
-                                    onChange={(e) => setConnectForm({ ...connectForm, password: e.target.value })}
-                                    placeholder="••••••••" />
-                            </div>
-                            <div className="glass-sm" style={{ padding: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                                🔒 Credentials are used to authenticate with the GST portal and fetch your data. They are transmitted securely.
-                            </div>
-                            <div className="modal-actions">
-                                <button type="button" className="btn" onClick={() => setShowConnect(false)}>Cancel</button>
-                                <button type="submit" className="btn btn-primary">Connect & Verify</button>
-                            </div>
-                        </form>
+                        {successMsg && otpStep === 2 && <div className="alert alert-success mb-md">✓ {successMsg}</div>}
+
+                        {otpStep === 1 ? (
+                            <form onSubmit={handleConnectRequest} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                <div className="input-group">
+                                    <label>Select GSTIN</label>
+                                    {gstins.length === 0 ? (
+                                        <div className="alert alert-info" style={{ fontSize: '13px', padding: '10px' }}>
+                                            No GSTINs found. Please <a href="/dashboard/clients" style={{ textDecoration: 'underline', color: 'inherit', fontWeight: 600 }}>Add a Client</a> first.
+                                        </div>
+                                    ) : (
+                                        <select className="input" required value={connectForm.gstinId}
+                                            onChange={(e) => setConnectForm({ ...connectForm, gstinId: e.target.value })}>
+                                            <option value="">Choose a GSTIN to connect...</option>
+                                            {gstins.map(g => (
+                                                <option key={g.id} value={g.id}>{g.gstin} — {g.clientName}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                                <div className="input-group">
+                                    <label>GST Portal Username</label>
+                                    <input className="input" required value={connectForm.username}
+                                        onChange={(e) => setConnectForm({ ...connectForm, username: e.target.value })}
+                                        placeholder="Your GST portal username" />
+                                </div>
+                                <div className="glass-sm" style={{ padding: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
+                                    🔒 Authentication is handled securely via the official GST portal.
+                                </div>
+                                <div className="modal-actions">
+                                    <button type="button" className="btn" onClick={() => setShowConnect(false)}>Cancel</button>
+                                    <button type="submit" className="btn btn-primary" disabled={!connectForm.gstinId}>Request OTP</button>
+                                </div>
+                            </form>
+                        ) : (
+                            <form onSubmit={handleVerifyOtp} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                <div className="input-group">
+                                    <label>Enter 6-Digit OTP</label>
+                                    <input className="input" required value={otp}
+                                        type="text" maxLength="6"
+                                        onChange={(e) => setOtp(e.target.value)}
+                                        placeholder="000000" style={{ letterSpacing: '8px', textAlign: 'center', fontSize: '20px', fontWeight: 'bold' }} />
+                                </div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                    TXID: <span style={{ fontFamily: 'monospace' }}>{transactionId}</span>
+                                </div>
+                                <div className="modal-actions">
+                                    <button type="button" className="btn" onClick={() => setOtpStep(1)}>Back</button>
+                                    <button type="submit" className="btn btn-primary" disabled={otp.length !== 6}>Verify & Connect</button>
+                                </div>
+                            </form>
+                        )}
                     </div>
                 </div>
             )}

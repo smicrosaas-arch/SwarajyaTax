@@ -127,8 +127,7 @@ class GSPService {
             }
         }
 
-        if (this.provider === 'SANDBOX') {
-            // ... (keep existing SANDBOX code)
+        if (this.provider.includes('SANDBOX')) {
             console.log(`[GSP Sandbox] Verifying ${gstin}`);
             try {
                 const response = await fetch(`${this.baseUrl}/gsp/public/gstin/${gstin}`, {
@@ -166,6 +165,145 @@ class GSPService {
         }
 
         throw new Error(`Unsupported GSP provider: ${this.provider}`);
+    }
+
+    /**
+     * Step 1: Request OTP from GST Portal
+     */
+    async requestOTP(username) {
+        console.log(`[GSP] requestOTP for ${username} with provider ${this.provider}`);
+
+        if (this.provider.includes('MOCK')) {
+            await new Promise(r => setTimeout(r, 800));
+            return { transactionId: "mock_tx_" + Date.now(), message: "OTP sent to registered mobile" };
+        }
+
+        if (this.provider.includes('SANDBOX')) {
+            try {
+                const response = await fetch(`${this.baseUrl}/gsp/authenticate/otp`, {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': this.apiKey,
+                        'x-api-secret': this.secret,
+                        'x-api-version': '1.0',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username })
+                });
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `Sandbox Error: ${response.status}`);
+
+                return {
+                    transactionId: data.data?.transaction_id || data.transaction_id,
+                    message: data.message || "OTP sent successfully"
+                };
+            } catch (err) {
+                console.error(`[GSP Sandbox] OTP Request Error: ${err.message}`);
+                throw err;
+            }
+        }
+
+        throw new Error(`OTP Request not supported for provider: ${this.provider}`);
+    }
+
+    /**
+     * Step 2: Verify OTP and Establish Session
+     */
+    async verifyOTP(username, otp, transactionId) {
+        console.log(`[GSP] verifyOTP for ${username} with provider ${this.provider}`);
+
+        if (this.provider.includes('MOCK')) {
+            await new Promise(r => setTimeout(r, 1000));
+            return { success: true, message: "Portal connection established" };
+        }
+
+        if (this.provider.includes('SANDBOX')) {
+            try {
+                const response = await fetch(`${this.baseUrl}/gsp/authenticate/otp/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': this.apiKey,
+                        'x-api-secret': this.secret,
+                        'x-api-version': '1.0',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, otp, transaction_id: transactionId })
+                });
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `Sandbox Error: ${response.status}`);
+
+                return {
+                    success: true,
+                    message: data.message || "Connection verified",
+                    expiry: data.data?.expiry || null
+                };
+            } catch (err) {
+                console.error(`[GSP Sandbox] OTP Verify Error: ${err.message}`);
+                throw err;
+            }
+        }
+
+        throw new Error(`OTP Verification not supported for provider: ${this.provider}`);
+    }
+
+    /**
+     * Step 3: Download Return Data (GSTR-1, 2A, 2B, 3B)
+     */
+    async downloadReturn(username, returnType, period) {
+        console.log(`[GSP] downloadReturn ${returnType} for ${username} period ${period}`);
+
+        if (this.provider.includes('MOCK')) {
+            await new Promise(r => setTimeout(r, 1500));
+            // Return dummy structured data for mock
+            return {
+                gstin: "MOCK_GSTIN",
+                returnType,
+                period,
+                invoices: [],
+                summary: {
+                    totalTaxableValue: Math.random() * 100000,
+                    totalIGST: Math.random() * 18000,
+                    totalCGST: 0,
+                    totalSGST: 0
+                }
+            };
+        }
+
+        if (this.provider.includes('SANDBOX')) {
+            // Map common types to Sandbox endpoints
+            const typeMap = {
+                'GSTR1': 'gstr1',
+                'GSTR2A': 'gstr2a',
+                'GSTR2B': 'gstr2b',
+                'GSTR3B': 'gstr3b'
+            };
+
+            const endpoint = typeMap[returnType] || returnType.toLowerCase();
+
+            try {
+                const response = await fetch(`${this.baseUrl}/gsp/returns/${endpoint}?username=${username}&ret_period=${period}`, {
+                    method: 'GET',
+                    headers: {
+                        'x-api-key': this.apiKey,
+                        'x-api-secret': this.secret,
+                        'x-api-version': '1.0',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `Sandbox Download Error: ${response.status}`);
+
+                return data.data || data;
+            } catch (err) {
+                console.error(`[GSP Sandbox] Download Error: ${err.message}`);
+                throw err;
+            }
+        }
+
+        throw new Error(`Return download not supported for provider: ${this.provider}`);
     }
 }
 
