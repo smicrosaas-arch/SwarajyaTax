@@ -65,7 +65,7 @@ async function start() {
         }
     });
 
-    // Register routes
+    const adminRoutes = require('./routes/admin');
     await app.register(authRoutes, { prefix: '/api/auth' });
     await app.register(clientRoutes, { prefix: '/api/clients' });
     await app.register(gstinRoutes, { prefix: '/api/gstins' });
@@ -74,8 +74,34 @@ async function start() {
     await app.register(taskRoutes, { prefix: '/api/tasks' });
     await app.register(dashboardRoutes, { prefix: '/api/dashboard' });
     await app.register(gstAccountRoutes, { prefix: '/api/gst-accounts' });
+    await app.register(adminRoutes, { prefix: '/api/admin' });
 
-    console.log('[BOOT] Registering diagnostic route /api/test-gsp/:gstin');
+    // TEMPORARY: One-time admin bootstrap endpoint - secured by secret key
+    // Usage: POST /api/auth/bootstrap-admin with header X-Bootstrap-Secret
+    app.post('/api/auth/bootstrap-admin', async (request, reply) => {
+        const secret = request.headers['x-bootstrap-secret'];
+        const { email } = request.body || {};
+        const expectedSecret = process.env.BOOTSTRAP_SECRET || 'swarajya-admin-bootstrap-2026';
+
+        if (!secret || secret !== expectedSecret) {
+            return reply.status(403).send({ error: 'Invalid bootstrap secret' });
+        }
+
+        if (!email) {
+            return reply.status(400).send({ error: 'email is required' });
+        }
+
+        try {
+            const user = await prisma.user.update({
+                where: { email },
+                data: { role: 'SYSTEM_ADMIN' }
+            });
+            return { success: true, message: `Promoted ${user.email} to SYSTEM_ADMIN` };
+        } catch (err) {
+            return reply.status(500).send({ error: err.message });
+        }
+    });
+
     // GSP Diagnostic
     app.get('/api/test-gsp/:gstin', async (request, reply) => {
         try {

@@ -73,6 +73,7 @@ model GSTAccount {
   id           String   @id @default(uuid())
   gstinId      String   @unique
   username     String
+  password     String?
   lastSyncAt   DateTime?
   syncStatus   String   @default("NEVER_SYNCED")
   isConnected  Boolean  @default(false)

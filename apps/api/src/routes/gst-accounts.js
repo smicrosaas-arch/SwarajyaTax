@@ -1,9 +1,10 @@
 async function gstAccountRoutes(fastify, options) {
+    const { encrypt, decrypt } = require('../utils/crypto');
     fastify.addHook('preHandler', fastify.authenticate);
 
     // Step 1: Request OTP from GST Portal
     fastify.post('/connect/request-otp', async (request, reply) => {
-        const { gstinId, username } = request.body || {};
+        const { gstinId, username, password } = request.body || {};
 
         if (!gstinId || !username) {
             return reply.status(400).send({ error: 'gstinId and username are required' });
@@ -20,11 +21,12 @@ async function gstAccountRoutes(fastify, options) {
         }
 
         try {
-            const result = await fastify.gsp.requestOTP(username);
+            const result = await fastify.gsp.requestOTP(username, password);
             return {
                 success: true,
                 transactionId: result.transactionId,
-                message: result.message || 'OTP sent successfully'
+                captcha: result.captcha, // Base64 captcha for Puppeteer provider
+                message: result.message || 'Login initialized'
             };
         } catch (err) {
             return reply.status(500).send({ error: err.message });
@@ -33,10 +35,10 @@ async function gstAccountRoutes(fastify, options) {
 
     // Step 2: Verify OTP and Connect
     fastify.post('/connect/verify', async (request, reply) => {
-        const { gstinId, username, otp, transactionId } = request.body || {};
+        const { gstinId, username, password, otp, transactionId, captchaValue } = request.body || {};
 
-        if (!gstinId || !username || !otp || !transactionId) {
-            return reply.status(400).send({ error: 'Missing required fields: gstinId, username, otp, transactionId' });
+        if (!gstinId || !username || (!otp && !captchaValue)) {
+            return reply.status(400).send({ error: 'Missing required fields: gstinId, username, and either otp or captcha' });
         }
 
         // Verify GSTIN belongs to tenant
@@ -50,7 +52,8 @@ async function gstAccountRoutes(fastify, options) {
         }
 
         try {
-            const result = await fastify.gsp.verifyOTP(username, otp, transactionId);
+            // Pass password and captchaValue to the service for Puppeteer flow
+            const result = await fastify.gsp.verifyOTP(username, password, otp, transactionId, captchaValue);
 
             if (result.success) {
                 // Upsert GSTAccount
@@ -58,13 +61,15 @@ async function gstAccountRoutes(fastify, options) {
                     where: { gstinId },
                     update: {
                         username,
+                        password: encrypt(password), // Encrypt before saving
                         isConnected: true,
                         syncStatus: 'READY',
-                        lastSyncAt: null // Reset on new connection
+                        lastSyncAt: null
                     },
                     create: {
                         gstinId,
                         username,
+                        password: encrypt(password), // Encrypt before saving
                         isConnected: true,
                         syncStatus: 'READY'
                     }
@@ -72,7 +77,10 @@ async function gstAccountRoutes(fastify, options) {
 
                 return { success: true, account, message: 'GST account connected successfully!' };
             } else {
-                return reply.status(400).send({ error: result.message || 'OTP verification failed' });
+                return reply.status(400).send({
+                    error: result.message || 'Verification failed',
+                    requiresOTP: result.requiresOTP
+                });
             }
         } catch (err) {
             return reply.status(500).send({ error: err.message });
@@ -149,7 +157,9 @@ async function gstAccountRoutes(fastify, options) {
 
         for (const returnType of reportTypes) {
             try {
-                const realData = await fastify.gsp.downloadReturn(account.username, returnType, targetPeriod);
+                // Pass the stored password (decrypted) for automated login during sync
+                const decryptedPassword = decrypt(account.password);
+                const realData = await fastify.gsp.downloadReturn(account.username, returnType, targetPeriod, decryptedPassword);
 
                 const gstReturn = await fastify.prisma.gSTReturn.create({
                     data: {
@@ -199,7 +209,6 @@ async function gstAccountRoutes(fastify, options) {
     // Sync ALL connected accounts at once
     fastify.post('/sync-all', async (request, reply) => {
         const { period } = request.body || {};
-
         const accounts = await fastify.prisma.gSTAccount.findMany({
             where: {
                 isConnected: true,
@@ -231,7 +240,8 @@ async function gstAccountRoutes(fastify, options) {
             const downloaded = [];
             for (const rt of reportTypes) {
                 try {
-                    const realData = await fastify.gsp.downloadReturn(account.username, rt, targetPeriod);
+                    const decryptedPassword = decrypt(account.password);
+                    const realData = await fastify.gsp.downloadReturn(account.username, rt, targetPeriod, decryptedPassword);
                     const gstReturn = await fastify.prisma.gSTReturn.create({
                         data: {
                             returnType: rt, period: targetPeriod,

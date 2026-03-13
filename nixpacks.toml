@@ -1,0 +1,9 @@
+[build]
+  builder = "nixpacks"
+
+[phases.build]
+  dependsOn = ["install"]
+  cmds = ["npm run build"]
+
+[phases.setup]
+  nixPkgs = ["...", "google-chrome-stable", "glib", "nss", "nspr", "atk", "at-spi2-atk", "cups", "libdrm", "dbus", "libxcb", "libX11", "libXcomposite", "libXdamage", "libXext", "libXfixes", "libXrandr", "libgbm", "pango", "cairo", "asound2", "expat"]

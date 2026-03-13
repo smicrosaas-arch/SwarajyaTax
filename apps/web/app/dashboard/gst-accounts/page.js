@@ -17,10 +17,12 @@ export default function GSTAccountsPage() {
     const [syncingId, setSyncingId] = useState(null);
     const [bulkSyncing, setBulkSyncing] = useState(false);
     const [syncJobs, setSyncJobs] = useState([]);
-    const [connectForm, setConnectForm] = useState({ gstinId: '', username: '' });
-    const [otpStep, setOtpStep] = useState(1); // 1: username, 2: otp
+    const [connectForm, setConnectForm] = useState({ gstinId: '', username: '', password: '', captchaValue: '' });
+    const [otpStep, setOtpStep] = useState(1); // 1: credentials, 2: captcha/final
     const [transactionId, setTransactionId] = useState('');
     const [otp, setOtp] = useState('');
+    const [captcha, setCaptcha] = useState(null); // base64
+    const [requiresOtp, setRequiresOtp] = useState(false);
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
 
@@ -64,8 +66,9 @@ export default function GSTAccountsPage() {
             if (!res.ok) throw new Error(data.error);
 
             setTransactionId(data.transactionId);
+            setCaptcha(data.captcha);
             setOtpStep(2);
-            setSuccessMsg(data.message || 'OTP sent to registered mobile');
+            setSuccessMsg(data.message || 'Login initialized. Please check captcha.');
         } catch (err) { setError(err.message); }
     };
 
@@ -78,12 +81,22 @@ export default function GSTAccountsPage() {
                 body: JSON.stringify({ ...connectForm, otp, transactionId })
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error);
+
+            if (!res.ok) {
+                if (data.requiresOTP) {
+                    setRequiresOtp(true);
+                    setSuccessMsg('Captcha verified. Please enter the OTP sent to your mobile.');
+                    return;
+                }
+                throw new Error(data.error);
+            }
 
             setShowConnect(false);
             setOtpStep(1);
             setOtp('');
-            setConnectForm({ gstinId: '', username: '' });
+            setCaptcha(null);
+            setRequiresOtp(false);
+            setConnectForm({ gstinId: '', username: '', password: '', captchaValue: '' });
             setSuccessMsg('GST account connected successfully!');
             fetchAccounts();
         } catch (err) { setError(err.message); }
@@ -290,17 +303,19 @@ export default function GSTAccountsPage() {
 
             {/* Connect GSTIN Modal */}
             {showConnect && (
-                <div className="modal-overlay" onClick={() => { setShowConnect(false); setOtpStep(1); }}>
+                <div className="modal-overlay" onClick={() => { setShowConnect(false); setOtpStep(1); setCaptcha(null); setRequiresOtp(false); }}>
                     <div className="glass modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>{otpStep === 1 ? 'Connect GST Account' : 'Verify OTP'}</h2>
+                        <h2>{otpStep === 1 ? 'Connect GST Account' : (requiresOtp ? 'Verify OTP' : 'Finalize Login')}</h2>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
                             {otpStep === 1
-                                ? "Enter your GST portal username. We'll send an OTP to your registered mobile number."
-                                : `Enter the 6-digit OTP sent for user ${connectForm.username}.`}
+                                ? "Enter your portal credentials. Browser automation will initiate the secure connection."
+                                : (requiresOtp
+                                    ? `Enter the OTP sent for ${connectForm.username}.`
+                                    : "Enter the CAPTCHA from the portal to finish connecting.")}
                         </p>
 
                         {error && showConnect && <div className="alert alert-error mb-md">⚠ {error}</div>}
-                        {successMsg && otpStep === 2 && <div className="alert alert-success mb-md">✓ {successMsg}</div>}
+                        {successMsg && <div className="alert alert-success mb-md">✓ {successMsg}</div>}
 
                         {otpStep === 1 ? (
                             <form onSubmit={handleConnectRequest} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -324,31 +339,55 @@ export default function GSTAccountsPage() {
                                     <label>GST Portal Username</label>
                                     <input className="input" required value={connectForm.username}
                                         onChange={(e) => setConnectForm({ ...connectForm, username: e.target.value })}
-                                        placeholder="Your GST portal username" />
+                                        placeholder="Portal username" />
+                                </div>
+                                <div className="input-group">
+                                    <label>GST Portal Password</label>
+                                    <input className="input" required type="password" value={connectForm.password}
+                                        onChange={(e) => setConnectForm({ ...connectForm, password: e.target.value })}
+                                        placeholder="Portal password" />
                                 </div>
                                 <div className="glass-sm" style={{ padding: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                                    🔒 Authentication is handled securely via the official GST portal.
+                                    🔒 Credentials are used only for browser sessions and are not stored permanently.
                                 </div>
                                 <div className="modal-actions">
                                     <button type="button" className="btn" onClick={() => setShowConnect(false)}>Cancel</button>
-                                    <button type="submit" className="btn btn-primary" disabled={!connectForm.gstinId}>Request OTP</button>
+                                    <button type="submit" className="btn btn-primary" disabled={!connectForm.gstinId}>Continue</button>
                                 </div>
                             </form>
                         ) : (
                             <form onSubmit={handleVerifyOtp} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                                <div className="input-group">
-                                    <label>Enter 6-Digit OTP</label>
-                                    <input className="input" required value={otp}
-                                        type="text" maxLength="6"
-                                        onChange={(e) => setOtp(e.target.value)}
-                                        placeholder="000000" style={{ letterSpacing: '8px', textAlign: 'center', fontSize: '20px', fontWeight: 'bold' }} />
-                                </div>
+                                {captcha && !requiresOtp && (
+                                    <div className="input-group">
+                                        <label>Enter CAPTCHA</label>
+                                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                            <div className="glass-sm" style={{ padding: '4px', background: '#fff' }}>
+                                                <img src={`data:image/png;base64,${captcha}`} alt="captcha" style={{ height: '40px' }} />
+                                            </div>
+                                            <button type="button" className="btn btn-sm" onClick={handleConnectRequest}>⟳ Reload</button>
+                                        </div>
+                                        <input className="input mt-xs" required value={connectForm.captchaValue}
+                                            onChange={(e) => setConnectForm({ ...connectForm, captchaValue: e.target.value })}
+                                            placeholder="Enter characters" />
+                                    </div>
+                                )}
+
+                                {requiresOtp && (
+                                    <div className="input-group">
+                                        <label>Enter Mobile OTP</label>
+                                        <input className="input" required value={otp}
+                                            type="text" maxLength="6"
+                                            onChange={(e) => setOtp(e.target.value)}
+                                            placeholder="000000" style={{ letterSpacing: '8px', textAlign: 'center', fontSize: '20px', fontWeight: 'bold' }} />
+                                    </div>
+                                )}
+
                                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                                    TXID: <span style={{ fontFamily: 'monospace' }}>{transactionId}</span>
+                                    Session ID: <span style={{ fontFamily: 'monospace' }}>{transactionId}</span>
                                 </div>
                                 <div className="modal-actions">
-                                    <button type="button" className="btn" onClick={() => setOtpStep(1)}>Back</button>
-                                    <button type="submit" className="btn btn-primary" disabled={otp.length !== 6}>Verify & Connect</button>
+                                    <button type="button" className="btn" onClick={() => { setOtpStep(1); setRequiresOtp(false); }}>Back</button>
+                                    <button type="submit" className="btn btn-primary">{requiresOtp ? 'Verify & Connect' : 'Verify Captcha'}</button>
                                 </div>
                             </form>
                         )}
