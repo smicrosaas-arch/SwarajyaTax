@@ -4,7 +4,7 @@ class GSPService {
     constructor(config) {
         this.apiKey = config.apiKey;
         this.secret = config.secret;
-        this.provider = config.provider || 'MOCK';
+        this.provider = (config.provider || 'MOCK').trim().toUpperCase();
         this.baseUrl = config.baseUrl || 'https://api.sandbox.co.in';
     }
 
