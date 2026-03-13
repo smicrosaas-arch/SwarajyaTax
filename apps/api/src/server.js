@@ -87,7 +87,11 @@ async function start() {
     });
 
     // Health check
-    app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+    app.get('/api/health', async () => ({
+        status: 'ok',
+        version: 'v1.2-scraper-fix',
+        timestamp: new Date().toISOString()
+    }));
 
     const port = process.env.PORT || process.env.API_PORT || 3001;
     console.log(`[BOOT] Attempting to listen on port ${port}`);
