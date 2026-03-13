@@ -13,9 +13,11 @@ class GSPService {
      * Fetches basic info like legal name and status
      */
     async verifyGSTIN(gstin) {
-        console.log(`[GSP] verifyGSTIN called for ${gstin} with provider ${this.provider}`);
+        const version = "v1.2-scraper-fix";
+        const providerHex = Buffer.from(this.provider).toString('hex');
+        console.log(`[GSP ${version}] verifyGSTIN called for ${gstin} | Provider: "${this.provider}" (hex: ${providerHex})`);
 
-        if (this.provider === 'MOCK') {
+        if (this.provider.includes('MOCK')) {
             console.log(`[GSP Mock] Verifying ${gstin}`);
             await new Promise(r => setTimeout(r, 1000));
             return {
@@ -27,7 +29,7 @@ class GSPService {
             };
         }
 
-        if (this.provider === 'PUPPETEER') {
+        if (this.provider.includes('PUPPETEER')) {
             console.log(`[GSP Puppeteer] Scraping details for ${gstin}`);
             let browser;
             try {
